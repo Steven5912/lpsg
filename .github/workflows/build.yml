@@ -37,6 +37,6 @@ jobs:
         with:
           name: 长按倍速玻璃_deb
           path: |
-            *.deb
-            .theos/_/*.deb
+            packages/*.deb
+            .theos/obj/debug/arm64e/*.dylib
           if-no-files-found: error
