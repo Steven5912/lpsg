@@ -3,6 +3,7 @@
 // v2: 复用 siwenjiajia 原生开关 sjj_video_long_press_glass_enabled_v1，
 //     修好 UIGlassEffect 创建，并让目标视图背景透明透出玻璃
 #import <UIKit/UIKit.h>
+#import <objc/message.h>
 
 #define LJ_GLASS_KEY @"sjj_video_long_press_glass_enabled_v1"
 
