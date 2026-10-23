@@ -20,12 +20,11 @@ jobs:
           sudo chown -R $(whoami) /opt/theos
           git clone --recursive --depth 1 https://github.com/theos/theos.git /opt/theos
 
-      - name: 准备 iOS SDK
+      - name: 准备 iOS SDK（用 Xcode 自带）
         run: |
-          git clone --depth 1 https://github.com/theos/sdks.git /tmp/sdks
           mkdir -p /opt/theos/sdks
-          cp /tmp/sdks/iPhoneOS18.5.sdk /tmp/sdks/iPhoneOS17.0.sdk /opt/theos/sdks/ 2>/dev/null || \
-          cp "$(ls /tmp/sdks/iPhoneOS*.sdk | head -1)" /opt/theos/sdks/
+          cp -r /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk /opt/theos/sdks/
+          ls /opt/theos/sdks/
 
       - name: 编译 (arm64 + arm64e)
         run: |
