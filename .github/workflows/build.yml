@@ -1,0 +1,43 @@
+name: Build 长按倍速玻璃 (arm64e)
+on:
+  workflow_dispatch:      # 在 Actions 页面手动点 Run
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: macos-latest   # 云端 macOS，自带 Apple Xcode → 能编真 arm64e
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 安装 ldid（Theos 签名工具）
+        run: brew install ldid || true
+
+      - name: 安装 Theos
+        run: |
+          sudo mkdir -p /opt/theos
+          sudo chown -R $(whoami) /opt/theos
+          git clone --recursive --depth 1 https://github.com/theos/theos.git /opt/theos
+
+      - name: 准备 iOS SDK
+        run: |
+          git clone --depth 1 https://github.com/theos/sdks.git /tmp/sdks
+          mkdir -p /opt/theos/sdks
+          cp /tmp/sdks/iPhoneOS18.5.sdk /tmp/sdks/iPhoneOS17.0.sdk /opt/theos/sdks/ 2>/dev/null || \
+          cp "$(ls /tmp/sdks/iPhoneOS*.sdk | head -1)" /opt/theos/sdks/
+
+      - name: 编译 (arm64 + arm64e)
+        run: |
+          export THEOS=/opt/theos
+          export THEOS_DEVICE_IP=127.0.0.1
+          make clean package
+
+      - name: 上传 deb 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: 长按倍速玻璃_deb
+          path: |
+            *.deb
+            .theos/_/*.deb
+          if-no-files-found: error

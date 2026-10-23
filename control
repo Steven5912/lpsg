@@ -1,0 +1,9 @@
+Package: com.siwenjiajia.longpressspeedglass
+Name: 长按倍速玻璃
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: 长按倍速时倍速视图使用液态玻璃材质（移植自 DYKiller），并注入“增强与优化”开关（默认开启）。
+Maintainer: personal
+Author: personal
+Section: Tweaks
+Depends: mobilesubstrate | ellekit | org.coolstar.libhooker, firmware (>= 14.0)
