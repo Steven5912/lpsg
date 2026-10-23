@@ -19,9 +19,8 @@ static UIView *LJ_MakeGlass(void){
     if (ge) {
         SEL s = NSSelectorFromString(@"effectWithStyle:");
         if (s && [ge respondsToSelector:s]) {
-            IMP imp = [ge methodForSelector:s];
-            UIVisualEffect *(*fn)(id, SEL, NSInteger) = (void *)imp;
-            UIVisualEffect *eff = fn(ge, s, 0);
+            id (*msg)(id, SEL, NSInteger) = (id (*)(id, SEL, NSInteger))objc_msgSend;
+            UIVisualEffect *eff = msg(ge, s, 0);
             if (eff) {
                 UIVisualEffectView *v = [[UIVisualEffectView alloc] initWithEffect:eff];
                 v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
