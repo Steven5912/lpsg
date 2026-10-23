@@ -20,14 +20,14 @@ static UIView *LJ_MakeGlass(void){
     }
     Class ge = NSClassFromString(@"UIGlassEffect");
     if (ge) {
-        id effect = [ge effectWithStyle:UIBlurEffectStyleSystemRegular];
+        id effect = [ge effectWithStyle:UIBlurEffectStyleRegular];
         if (effect) {
             UIVisualEffectView *v = [[UIVisualEffectView alloc] initWithEffect:effect];
             v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
             return v;
         }
     }
-    UIVisualEffectView *v = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemRegular]];
+    UIVisualEffectView *v = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleRegular]];
     v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     return v;
 }
@@ -47,7 +47,7 @@ static void LJ_ApplyGlass(UIView *target){
 %hook AFDFastSpeedView
 - (void)layoutSubviews {
     %orig;
-    LJ_ApplyGlass(self);
+    LJ_ApplyGlass((UIView *)self);
 }
 %end
 
@@ -65,7 +65,7 @@ static NSInteger LJ_TargetSection(UITableView *tv){
 }
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
     NSInteger target = LJ_TargetSection(tv);
-    NSInteger last = [self tableView:tv numberOfRowsInSection:target] - 1;
+    NSInteger last = [(id)self tableView:tv numberOfRowsInSection:target] - 1;
     if (ip.section == target && ip.row == last) {
         UITableViewCell *cell = [tv dequeueReusableCellWithIdentifier:@"LongPressSpeedGlassCell"];
         if (!cell) {
@@ -84,7 +84,7 @@ static NSInteger LJ_TargetSection(UITableView *tv){
 }
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     NSInteger target = LJ_TargetSection(tv);
-    NSInteger last = [self tableView:tv numberOfRowsInSection:target] - 1;
+    NSInteger last = [(id)self tableView:tv numberOfRowsInSection:target] - 1;
     if (ip.section == target && ip.row == last) {
         [tv deselectRowAtIndexPath:ip animated:YES];
         return;
