@@ -1,7 +1,5 @@
 // 长按倍速玻璃 — 从 DYKiller(液态玻璃) 移植到 siwenjiajia
-// 用 Logos %hook/%orig，Theos 编译 arm64e 时自动处理指针签名(PAC)
-// v2: 复用 siwenjiajia 原生开关 sjj_video_long_press_glass_enabled_v1，
-//     修好 UIGlassEffect 创建，并让目标视图背景透明透出玻璃
+// v3: 只给底部"下滑松手锁定2倍速"面板铺轻量液态玻璃，不铺全屏
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
 
@@ -10,18 +8,18 @@
 static BOOL LJ_Enabled(void){
     NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
     id v = [ud objectForKey:LJ_GLASS_KEY];
-    return v ? [ud boolForKey:LJ_GLASS_KEY] : YES; // 默认开启
+    return v ? [ud boolForKey:LJ_GLASS_KEY] : YES;
 }
 
-// 玻璃材质：iOS26 液态玻璃 UIGlassEffect → siwenjiajia 自带视图 → 模糊玻璃
+// 轻量液态玻璃材质（不遮挡视频）
 static UIView *LJ_MakeGlass(void){
-    // 1) iOS26 液态玻璃 UIGlassEffect (effectWithStyle:0 = Standard)
+    // 1) iOS26 液态玻璃 UIGlassEffect
     Class ge = NSClassFromString(@"UIGlassEffect");
     if (ge) {
         SEL s = NSSelectorFromString(@"effectWithStyle:");
         if (s && [ge respondsToSelector:s]) {
             id (*msg)(id, SEL, NSInteger) = (id (*)(id, SEL, NSInteger))objc_msgSend;
-            UIVisualEffect *eff = msg(ge, s, 0);
+            id eff = msg(ge, s, 0); // Standard
             if (eff) {
                 UIVisualEffectView *v = [[UIVisualEffectView alloc] initWithEffect:eff];
                 v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -30,18 +28,8 @@ static UIView *LJ_MakeGlass(void){
             }
         }
     }
-    // 2) siwenjiajia 自带玻璃视图
-    Class sjj = NSClassFromString(@"SJJLiquidGlassFlexView");
-    if (sjj) {
-        UIView *g = [[sjj alloc] initWithFrame:CGRectZero];
-        if (g && [g isKindOfClass:[UIView class]]) {
-            g.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-            g.userInteractionEnabled = NO;
-            return g;
-        }
-    }
-    // 3) 回退模糊玻璃
-    UIVisualEffectView *v = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleRegular]];
+    // 2) 回退：超薄材质（透明磨砂，不遮挡）
+    UIVisualEffectView *v = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial]];
     v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     v.userInteractionEnabled = NO;
     return v;
@@ -55,25 +43,58 @@ static void LJ_ApplyGlass(UIView *target){
     glass.tag = 0x5A5A;
     glass.frame = target.bounds;
     glass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    // 关键：目标视图背景设为透明，玻璃材质才能透出来
     target.backgroundColor = [UIColor clearColor];
     target.opaque = NO;
     [target insertSubview:glass atIndex:0];
     [target sendSubviewToBack:glass];
 }
 
-// ===== 一、长按倍速视图玻璃化 =====
+// ===== 递归查找包含"松手/下滑"文字的 UILabel =====
+static UILabel *LJ_FindLabel(UIView *c, NSString *needle){
+    if (!c) return nil;
+    for (UIView *sub in c.subviews) {
+        if ([sub isKindOfClass:[UILabel class]]) {
+            NSString *t = ((UILabel *)sub).text;
+            if (t && [t containsString:needle]) return (UILabel *)sub;
+        }
+        UILabel *r = LJ_FindLabel(sub, needle);
+        if (r) return r;
+    }
+    return nil;
+}
+
+// ===== 从 label 向上找面板容器（大小合适的一层） =====
+static UIView *LJ_PanelForLabel(UILabel *label){
+    if (!label) return nil;
+    UIView *v = label;
+    for (int i = 0; i < 5; i++) {
+        UIView *p = v.superview;
+        if (!p) break;
+        CGFloat w = p.bounds.size.width, h = p.bounds.size.height;
+        // 面板特征：宽度>=80，高度36~500（不是全屏），不是纯文本小容器
+        if (w >= 80 && h >= 36 && h <= 500) return p;
+        v = p;
+    }
+    return label.superview;
+}
+
+// ===== 一、只给底部倍速面板铺玻璃 =====
 %hook AFDFastSpeedView
 - (void)layoutSubviews {
     %orig;
-    LJ_ApplyGlass((UIView *)self);
+    UIView *sv = (UIView *)self;
+    UILabel *lab = LJ_FindLabel(sv, @"松手");
+    if (!lab) lab = LJ_FindLabel(sv, @"下滑");
+    if (!lab) return;
+    UIView *panel = LJ_PanelForLabel(lab);
+    if (panel) LJ_ApplyGlass(panel);
 }
 %end
 
 // ===== 二、注入“抖音优化-增强与优化”菜单开关 =====
 static NSInteger LJ_TargetSection(UITableView *tv){
     long n = [tv numberOfSections];
-    return n > 0 ? n - 1 : 0; // 追加到最后一个分组
+    return n > 0 ? n - 1 : 0;
 }
 
 %hook siwenjiajiaPanel
@@ -95,7 +116,7 @@ static NSInteger LJ_TargetSection(UITableView *tv){
             cell.accessoryView = sw;
         }
         cell.textLabel.text = @"长按倍速玻璃";
-        cell.detailTextLabel.text = @"长按倍速时，倍速视图使用液态玻璃材质";
+        cell.detailTextLabel.text = @"长按倍速时，仅底部倍速面板使用液态玻璃材质";
         ((UISwitch *)[cell viewWithTag:0x5B5B]).on = LJ_Enabled();
         return cell;
     }
@@ -116,7 +137,7 @@ static NSInteger LJ_TargetSection(UITableView *tv){
 }
 %end
 
-// ===== 三、默认开启（未设置过时默认打开） =====
+// ===== 三、默认开启 =====
 %ctor {
     NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
     id v = [ud objectForKey:LJ_GLASS_KEY];
