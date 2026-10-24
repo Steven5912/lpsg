@@ -1,8 +1,14 @@
-// 长按倍速玻璃 — 从 DYKiller(液态玻璃) 移植到 siwenjiajia
-// v13: 震动诊断（证明插件是否加载）+ 多路找窗口
+// 长按倍速玻璃 — v14: 分步震动诊断（加载1下/找到文字2下/铺玻璃3下）
 #import <UIKit/UIKit.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <objc/message.h>
+
+static void LJ_Vibrate(int n){
+    for (int i = 0; i < n; i++) {
+        AudioServicesPlaySystemSound(kSystemSoundID_Vibrate);
+        usleep(180000);
+    }
+}
 
 static UIView *LJ_MakeGlass(void){
     UIVisualEffect *eff = nil;
@@ -40,10 +46,13 @@ static void LJ_ApplyGlass(UIView *target){
     target.opaque = NO;
     [target insertSubview:glass atIndex:0];
     [target sendSubviewToBack:glass];
+    static double lastGlass = 0;
+    double now = CACurrentMediaTime();
+    if (now - lastGlass > 3.0) { lastGlass = now; LJ_Vibrate(3); }
 }
 
 static UILabel *LJ_FindLabel(UIView *c, NSString *needle, int depth){
-    if (!c || depth > 12) return nil;
+    if (!c || depth > 14) return nil;
     for (UIView *sub in c.subviews) {
         if ([sub isKindOfClass:[UILabel class]]) {
             NSString *t = ((UILabel *)sub).text;
@@ -69,7 +78,6 @@ static UIView *LJ_PanelForLabel(UILabel *label){
     return p;
 }
 
-// 多路回退找所有窗口
 static NSArray *LJ_AllWindows(void){
     NSMutableArray *arr = [NSMutableArray array];
     NSMutableSet *seen = [NSMutableSet set];
@@ -87,9 +95,7 @@ static NSArray *LJ_AllWindows(void){
         }
     }
     UIApplication *app = [UIApplication sharedApplication];
-    if ([app respondsToSelector:@selector(windows)]) {
-        for (UIWindow *w in [app windows]) add(w);
-    }
+    if ([app respondsToSelector:@selector(windows)]) for (UIWindow *w in [app windows]) add(w);
     if (app.delegate && [app.delegate respondsToSelector:@selector(window)]) {
         UIWindow *w = [app.delegate performSelector:@selector(window)];
         if (w) add(w);
@@ -103,20 +109,19 @@ static void LJ_Scan(void){
         if (!lab) lab = LJ_FindLabel(w, @"锁定", 0);
         if (!lab) lab = LJ_FindLabel(w, @"倍速", 0);
         if (!lab) continue;
+        // 找到文字 -> 震2下（限频）
+        static double lastFound = 0;
+        double now = CACurrentMediaTime();
+        if (now - lastFound > 3.0) { lastFound = now; LJ_Vibrate(2); }
         UIView *panel = LJ_PanelForLabel(lab);
         if (panel) LJ_ApplyGlass(panel);
     }
 }
 
-// 震动诊断：插件加载后 2 秒震动一下（不依赖窗口，加载即触发）
-static void LJ_Diag(void){
-    AudioServicesPlaySystemSound(kSystemSoundID_Vibrate);
-}
-
 %ctor {
     dispatch_async(dispatch_get_main_queue(), ^{
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            LJ_Diag();
+            LJ_Vibrate(1); // 加载确认
         });
         [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *t){
             LJ_Scan();
@@ -143,51 +148,5 @@ static void LJ_Diag(void){
         UIView *p = lab ? LJ_PanelForLabel(lab) : nil;
         if (p) LJ_ApplyGlass(p);
     }
-}
-%end
-
-// ===== 注入“抖音优化-增强与优化”菜单开关 =====
-static NSInteger LJ_TargetSection(UITableView *tv){
-    long n = [tv numberOfSections];
-    return n > 0 ? n - 1 : 0;
-}
-
-%hook siwenjiajiaPanel
-- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)section {
-    NSInteger n = %orig;
-    if (section == LJ_TargetSection(tv)) return n + 1;
-    return n;
-}
-- (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
-    NSInteger target = LJ_TargetSection(tv);
-    NSInteger last = [(id)self tableView:tv numberOfRowsInSection:target] - 1;
-    if (ip.section == target && ip.row == last) {
-        UITableViewCell *cell = [tv dequeueReusableCellWithIdentifier:@"LongPressSpeedGlassCell"];
-        if (!cell) {
-            cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"LongPressSpeedGlassCell"];
-            UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectZero];
-            sw.tag = 0x5B5B;
-            [sw addTarget:self action:@selector(LJ_ToggleSpeedGlass:) forControlEvents:UIControlEventValueChanged];
-            cell.accessoryView = sw;
-        }
-        cell.textLabel.text = @"长按倍速玻璃";
-        cell.detailTextLabel.text = @"长按倍速时，仅底部倍速面板使用液态玻璃材质";
-        ((UISwitch *)[cell viewWithTag:0x5B5B]).on = YES;
-        return cell;
-    }
-    return %orig;
-}
-- (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
-    NSInteger target = LJ_TargetSection(tv);
-    NSInteger last = [(id)self tableView:tv numberOfRowsInSection:target] - 1;
-    if (ip.section == target && ip.row == last) {
-        [tv deselectRowAtIndexPath:ip animated:YES];
-        return;
-    }
-    %orig;
-}
-- (void)LJ_ToggleSpeedGlass:(UISwitch *)sender {
-    [[NSUserDefaults standardUserDefaults] setBool:sender.on forKey:@"SJWJLongPressSpeedGlass"];
-    [[NSUserDefaults standardUserDefaults] synchronize];
 }
 %end
