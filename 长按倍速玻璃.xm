@@ -90,7 +90,6 @@ static NSArray *LJ_AllWindows(void){
     if ([app respondsToSelector:@selector(windows)]) {
         for (UIWindow *w in [app windows]) add(w);
     }
-    if ([app respondsToSelector:@selector(keyWindow)]) add([app keyWindow]);
     if (app.delegate && [app.delegate respondsToSelector:@selector(window)]) {
         UIWindow *w = [app.delegate performSelector:@selector(window)];
         if (w) add(w);
