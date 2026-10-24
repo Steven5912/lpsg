@@ -1,5 +1,5 @@
 // 长按倍速玻璃 — 从 DYKiller(液态玻璃) 移植到 siwenjiajia
-// v6: 硬性安全——只给"小而像提示面板"的视图铺玻璃，绝不给大视图/视频层铺
+// v7: 面板判定=“位于屏幕底部 + 高度适中”，允许底部通栏短条，排除视频层/中间层
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
 
@@ -30,21 +30,32 @@ static UIView *LJ_MakeGlass(void){
     return v;
 }
 
-// 安全闸：目标必须是"小而像提示面板"的视图，否则一律不铺（绝不误伤全屏/视频层）
-static BOOL LJ_IsSmallPanel(UIView *target){
+// 视图是否位于屏幕底部（下缘在底部 25% 区域内）
+static BOOL LJ_IsBottomArea(UIView *target){
+    CGFloat sh = [UIScreen mainScreen].bounds.size.height;
+    UIWindow *win = target.window;
+    CGRect f = target.bounds;
+    if (win) f = [target convertRect:target.bounds toView:win];
+    CGFloat bottomGap = sh - CGRectGetMaxY(f);
+    return bottomGap >= 0 && bottomGap < sh * 0.25;
+}
+
+// 安全面板判定：高度适中 + 位于屏幕底部；排除视频层/中间层/全屏
+static BOOL LJ_IsSafePanel(UIView *target){
     CGFloat sw = [UIScreen mainScreen].bounds.size.width;
     CGFloat sh = [UIScreen mainScreen].bounds.size.height;
     CGFloat w = target.bounds.size.width, h = target.bounds.size.height;
     if (w <= 0 || h <= 0) return NO;
-    if (h < 28 || h > 170) return NO;      // 高度适中（排除视频层/全屏）
-    if (w < 60 || w > sw * 0.92) return NO; // 宽度适中
+    if (h < 24 || h > 170) return NO;      // 高度适中（排除视频层/全屏）
+    if (w < 40) return NO;                 // 不要太窄
     if (w * h > sw * sh * 0.5) return NO;   // 面积不超过半屏
+    if (!LJ_IsBottomArea(target)) return NO; // 必须位于屏幕底部
     return YES;
 }
 
 static void LJ_ApplyGlass(UIView *target){
     if (!target || !LJ_Enabled()) return;
-    if (!LJ_IsSmallPanel(target)) return;   // 硬性：不是小面板就不铺
+    if (!LJ_IsSafePanel(target)) return;
     for (UIView *sub in target.subviews) if (sub.tag == 0x5A5A) return;
     UIView *glass = LJ_MakeGlass();
     if (!glass) return;
@@ -86,17 +97,17 @@ static UILabel *LJ_FindLabelInChain(UIView *sv){
     return nil;
 }
 
-// ===== 从 label 向上找"小而像提示面板"的容器（最多3层，找不到返回nil） =====
+// ===== 从 label 向上找"底部安全面板"容器（最多6层） =====
 static UIView *LJ_PanelForLabel(UILabel *label){
     if (!label) return nil;
     UIView *v = label;
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 6; i++) {
         UIView *p = v.superview;
         if (!p) break;
-        if (LJ_IsSmallPanel(p)) return p;
+        if (LJ_IsSafePanel(p)) return p;
         v = p;
     }
-    return nil; // 找不到就不铺，绝不误伤大视图
+    return nil;
 }
 
 // ===== 一、只给底部倍速面板铺玻璃 =====
