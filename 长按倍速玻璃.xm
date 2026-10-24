@@ -1,4 +1,4 @@
-// 长按倍速玻璃 — v24: 按文字视觉中心（对齐感知）居中，箭头检测收紧
+// 长按倍速玻璃 — v25: 倍速提示一出现立刻铺玻璃（hook setText + 0.08s 快速扫描兜底）
 #import <UIKit/UIKit.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <objc/message.h>
@@ -31,15 +31,14 @@ static UIVisualEffect *LJ_MakeEffect(void){
     return eff;
 }
 
-// 在文字左侧找箭头元素：只认紧贴文字左侧的小元素（箭头字符UILabel 或 极小图标）
 static CGRect LJ_FindArrowLeft(UIView *parent, UILabel *textLabel){
     CGRect tf = textLabel.frame;
     CGRect best = CGRectNull;
     for (UIView *sub in parent.subviews) {
         if (sub == textLabel) continue;
         CGRect sf = sub.frame;
-        if (CGRectGetMaxX(sf) >= tf.origin.x + 20) continue;          // 不紧贴文字左侧
-        if (CGRectGetMaxY(sf) < tf.origin.y || sf.origin.y > CGRectGetMaxY(tf)) continue; // 不纵向重叠
+        if (CGRectGetMaxX(sf) >= tf.origin.x + 20) continue;
+        if (CGRectGetMaxY(sf) < tf.origin.y || sf.origin.y > CGRectGetMaxY(tf)) continue;
         BOOL arrowText = NO;
         if ([sub isKindOfClass:[UILabel class]]) {
             NSString *t = ((UILabel *)sub).text;
@@ -51,6 +50,13 @@ static CGRect LJ_FindArrowLeft(UIView *parent, UILabel *textLabel){
         }
     }
     return best;
+}
+
+static BOOL LJ_IsNearBottom(UIView *v){
+    UIView *w = v.window;
+    if (!w) return YES;
+    CGRect f = [v convertRect:v.bounds toView:w];
+    return f.origin.y > w.bounds.size.height * 0.5;
 }
 
 static void LJ_ApplyGlassToLabel(UILabel *label){
@@ -70,22 +76,20 @@ static void LJ_ApplyGlassToLabel(UILabel *label){
     CGFloat textW = ceil(ts.width);
     CGFloat textH = ceil(ts.height);
 
-    // 文字视觉中心（按对齐方式，避免 label frame 比文字宽导致偏差）
     CGFloat textMidX;
     NSTextAlignment al = label.textAlignment;
     if (al == NSTextAlignmentLeft)      textMidX = tf.origin.x + textW / 2.0;
     else if (al == NSTextAlignmentRight) textMidX = CGRectGetMaxX(tf) - textW / 2.0;
     else                                 textMidX = CGRectGetMidX(tf);
 
-    // 箭头向左延伸
     CGRect arrow = LJ_FindArrowLeft(parent, label);
     CGFloat hintLeft = textMidX - textW / 2.0;
     CGFloat hintRight = textMidX + textW / 2.0;
     if (!CGRectIsNull(arrow)) hintLeft = MIN(hintLeft, arrow.origin.x);
     CGFloat centerX = (hintLeft + hintRight) / 2.0;
 
-    CGFloat pw = (hintRight - hintLeft) + 40;   // +20 +20
-    CGFloat ph = textH + 12;                     // +6 +6
+    CGFloat pw = (hintRight - hintLeft) + 40;
+    CGFloat ph = textH + 12;
     if (pw < 60) pw = 60;
     if (ph < 28) ph = 28;
 
@@ -131,21 +135,19 @@ static void LJ_ApplyGlassToLabel(UILabel *label){
     if (now - lastGlass > 3.0) { lastGlass = now; LJ_Vibrate(4); }
 }
 
-static UILabel *LJ_FindLabel(UIView *c, NSString *needle, int depth, BOOL *nearBottom){
+static BOOL LJ_IsHintText(NSString *t){
+    if (!t) return NO;
+    return ([t containsString:@"松手"] || [t containsString:@"锁定"] || [t containsString:@"下滑"]);
+}
+
+static UILabel *LJ_FindLabel(UIView *c, NSString *needle, int depth){
     if (!c || depth > 16) return nil;
     for (UIView *sub in c.subviews) {
         if ([sub isKindOfClass:[UILabel class]]) {
             NSString *t = ((UILabel *)sub).text;
-            if (t && [t containsString:needle]) {
-                UIView *w = sub.window;
-                if (w) {
-                    CGRect f = [sub convertRect:sub.bounds toView:w];
-                    if (f.origin.y > w.bounds.size.height * 0.5 && nearBottom) *nearBottom = YES;
-                } else if (nearBottom) *nearBottom = YES;
-                return (UILabel *)sub;
-            }
+            if (t && [t containsString:needle]) return (UILabel *)sub;
         }
-        UILabel *r = LJ_FindLabel(sub, needle, depth + 1, nearBottom);
+        UILabel *r = LJ_FindLabel(sub, needle, depth + 1);
         if (r) return r;
     }
     return nil;
@@ -178,11 +180,10 @@ static NSArray *LJ_AllWindows(void){
 
 static void LJ_Scan(void){
     for (UIWindow *w in LJ_AllWindows()) {
-        BOOL near = NO;
-        UILabel *lab = LJ_FindLabel(w, @"松手", 0, &near);
-        if (!lab) { near = NO; lab = LJ_FindLabel(w, @"锁定", 0, &near); }
-        if (!lab) { near = NO; lab = LJ_FindLabel(w, @"下滑", 0, &near); }
-        if (!lab || !near) continue;
+        UILabel *lab = LJ_FindLabel(w, @"松手", 0);
+        if (!lab) lab = LJ_FindLabel(w, @"锁定", 0);
+        if (!lab) lab = LJ_FindLabel(w, @"下滑", 0);
+        if (!lab || !LJ_IsNearBottom(lab)) continue;
         static double lastFound = 0;
         double now = CACurrentMediaTime();
         if (now - lastFound > 3.0) { lastFound = now; LJ_Vibrate(2); }
@@ -190,12 +191,24 @@ static void LJ_Scan(void){
     }
 }
 
+%hook UILabel
+- (void)setText:(NSString *)text {
+    %orig;
+    if (LJ_IsHintText(self.text)) {
+        UILabel *lab = self;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (LJ_IsNearBottom(lab)) LJ_ApplyGlassToLabel(lab);
+        });
+    }
+}
+%end
+
 %ctor {
     dispatch_async(dispatch_get_main_queue(), ^{
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             LJ_Vibrate(1);
         });
-        [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *t){
+        [NSTimer scheduledTimerWithTimeInterval:0.08 repeats:YES block:^(NSTimer *t){
             LJ_Scan();
         }];
     });
