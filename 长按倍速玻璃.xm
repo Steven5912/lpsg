@@ -1,5 +1,5 @@
 // 长按倍速玻璃 — 从 DYKiller(液态玻璃) 移植到 siwenjiajia
-// v11: 定时器主动扫窗口找文字铺玻璃，完全不依赖钩子触发
+// v12: 定时器 + 加载诊断横幅（确认插件是否真正加载）
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
 
@@ -27,8 +27,8 @@ static void LJ_ApplyGlass(UIView *target){
     CGFloat sh = [UIScreen mainScreen].bounds.size.height;
     CGFloat w = target.bounds.size.width, h = target.bounds.size.height;
     if (w <= 0 || h <= 0) return;
-    if (h > 170) return;              // 排除视频层/全屏
-    if (w * h > sw * sh * 0.5) return; // 面积不超半屏
+    if (h > 170) return;
+    if (w * h > sw * sh * 0.5) return;
     for (UIView *sub in target.subviews) if (sub.tag == 0x5A5A) return;
     UIView *glass = LJ_MakeGlass();
     if (!glass) return;
@@ -80,7 +80,6 @@ static NSArray *LJ_AllWindows(void){
     return arr;
 }
 
-// 定时扫描：找"松手/锁定/倍速"文字并铺玻璃
 static void LJ_Scan(void){
     for (UIWindow *w in LJ_AllWindows()) {
         UILabel *lab = LJ_FindLabel(w, @"松手", 0);
@@ -92,16 +91,40 @@ static void LJ_Scan(void){
     }
 }
 
-// ===== 触发1：定时器（主，可靠） =====
+static void LJ_ShowDiag(void){
+    for (UIWindow *w in LJ_AllWindows()) {
+        CGFloat wd = w.bounds.size.width;
+        UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(20, 70, wd - 40, 44)];
+        lb.text = @"长按倍速玻璃插件已加载";
+        lb.backgroundColor = [UIColor colorWithRed:0 green:0.5 blue:0.9 alpha:0.85];
+        lb.textColor = [UIColor whiteColor];
+        lb.font = [UIFont boldSystemFontOfSize:15];
+        lb.textAlignment = NSTextAlignmentCenter;
+        lb.layer.cornerRadius = 10;
+        lb.clipsToBounds = YES;
+        lb.alpha = 0;
+        [w addSubview:lb];
+        [UIView animateWithDuration:0.3 animations:^{ lb.alpha = 1; }];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [UIView animateWithDuration:0.3 animations:^{ lb.alpha = 0; } completion:^(BOOL f){ [lb removeFromSuperview]; }];
+        });
+        break;
+    }
+}
+
+// ===== 主：定时器 =====
 %ctor {
     dispatch_async(dispatch_get_main_queue(), ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            LJ_ShowDiag();
+        });
         [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *t){
             LJ_Scan();
         }];
     });
 }
 
-// ===== 触发2/3/4：钩子（备份，若触发则更即时） =====
+// ===== 备份触发：UIWindow/UIView/AFDFastSpeedView 钩子 =====
 %hook UIWindow
 - (void)layoutSubviews {
     %orig;
