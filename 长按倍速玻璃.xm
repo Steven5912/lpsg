@@ -1,4 +1,4 @@
-// 长按倍速玻璃 — v15: 底部区域定位 + 最小容器 + 位置安全闸
+// 长按倍速玻璃 — v16: 可见浅色基底 + 4下震动标记"已铺玻璃"
 #import <UIKit/UIKit.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <objc/message.h>
@@ -10,72 +10,62 @@ static void LJ_Vibrate(int n){
     }
 }
 
-static UIView *LJ_MakeGlass(void){
+static UIVisualEffect *LJ_MakeEffect(void){
     UIVisualEffect *eff = nil;
     Class ge = NSClassFromString(@"UIGlassEffect");
     if (ge) {
         SEL s = NSSelectorFromString(@"effectWithStyle:");
         if (s && [ge respondsToSelector:s]) {
             id (*msg)(id, SEL, NSInteger) = (id (*)(id, SEL, NSInteger))objc_msgSend;
-            eff = msg(ge, s, 0);
+            @try { eff = msg(ge, s, 0); } @catch(...) { eff = nil; }
         }
     }
-    if (!eff) eff = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
+    if (!eff) {
+        @try {
+            if ([UIBlurEffect respondsToSelector:@selector(effectWithStyle:)] &&
+                UIBlurEffectStyleSystemMaterial != 999999) {
+                eff = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
+            }
+        } @catch(...) { eff = nil; }
+    }
     if (!eff) eff = [UIBlurEffect effectWithStyle:UIBlurEffectStyleRegular];
-    UIVisualEffectView *v = [[UIVisualEffectView alloc] initWithEffect:eff];
-    v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    v.userInteractionEnabled = NO;
-    return v;
-}
-
-// 位置安全闸：只允许玻璃屏幕底部区域、且非全屏
-static BOOL LJ_OkPanel(UIView *target){
-    UIView *w = target.window;
-    if (!w) return NO;
-    CGRect f = [target convertRect:target.bounds toView:w];
-    CGFloat sh = w.bounds.size.height;
-    CGFloat sw = w.bounds.size.width;
-    // 必须位于屏幕底部 55% 以内
-    if (f.origin.y < sh * 0.45) return NO;
-    // 高度不超过半屏
-    if (f.size.height > sh * 0.5) return NO;
-    // 宽度不超过 96% 屏宽
-    if (f.size.width > sw * 0.96) return NO;
-    // 面积不超过半屏
-    if (f.size.width * f.size.height > sw * sh * 0.5) return NO;
-    return YES;
+    return eff;
 }
 
 static void LJ_ApplyGlass(UIView *target){
     if (!target) return;
     for (UIView *sub in target.subviews) if (sub.tag == 0x5A5A) return;
-    UIView *glass = LJ_MakeGlass();
-    if (!glass) return;
-    glass.tag = 0x5A5A;
-    glass.frame = target.bounds;
-    glass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    CGFloat w = target.bounds.size.width, h = target.bounds.size.height;
+    if (w <= 0 || h <= 0) return;
+    UIVisualEffect *eff = LJ_MakeEffect();
+    if (!eff) eff = [UIBlurEffect effectWithStyle:UIBlurEffectStyleRegular];
+    UIVisualEffectView *vev = [[UIVisualEffectView alloc] initWithEffect:eff];
+    vev.frame = target.bounds;
+    vev.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    vev.userInteractionEnabled = NO;
+    // 可见浅色基底：无论模糊是否渲染，都能看到玻璃区域
+    vev.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.15];
     target.backgroundColor = [UIColor clearColor];
     target.opaque = NO;
-    [target insertSubview:glass atIndex:0];
-    [target sendSubviewToBack:glass];
+    [target insertSubview:vev atIndex:0];
+    [target sendSubviewToBack:vev];
+    vev.tag = 0x5A5A;
     static double lastGlass = 0;
     double now = CACurrentMediaTime();
-    if (now - lastGlass > 3.0) { lastGlass = now; LJ_Vibrate(3); }
+    if (now - lastGlass > 3.0) { lastGlass = now; LJ_Vibrate(4); }
 }
 
-// 向上找最小的"药丸容器"（24-260 高、>=60 宽）
+// 最宽容的容器选取：向上找第一个 >=16高 且 >=40宽的祖先
 static UIView *LJ_PanelForLabel(UILabel *label){
     UIView *p = label;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 6; i++) {
         if (!p.superview) break;
         p = p.superview;
-        CGFloat h = p.bounds.size.height, w = p.bounds.size.width;
-        if (h >= 24 && h <= 260 && w >= 60) return p;
+        if (p.bounds.size.height >= 16 && p.bounds.size.width >= 40) return p;
     }
-    return nil;
+    return label.superview;
 }
 
-// 递归找文字，返回其屏幕坐标是否在底部区域
 static UILabel *LJ_FindLabel(UIView *c, NSString *needle, int depth, BOOL *nearBottom){
     if (!c || depth > 16) return nil;
     for (UIView *sub in c.subviews) {
@@ -85,8 +75,8 @@ static UILabel *LJ_FindLabel(UIView *c, NSString *needle, int depth, BOOL *nearB
                 UIView *w = sub.window;
                 if (w) {
                     CGRect f = [sub convertRect:sub.bounds toView:w];
-                    if (f.origin.y > w.bounds.size.height * 0.55 && nearBottom) *nearBottom = YES;
-                }
+                    if (f.origin.y > w.bounds.size.height * 0.5 && nearBottom) *nearBottom = YES;
+                } else if (nearBottom) *nearBottom = YES;
                 return (UILabel *)sub;
             }
         }
@@ -127,13 +117,26 @@ static void LJ_Scan(void){
         UILabel *lab = LJ_FindLabel(w, @"松手", 0, &near);
         if (!lab) { near = NO; lab = LJ_FindLabel(w, @"锁定", 0, &near); }
         if (!lab) { near = NO; lab = LJ_FindLabel(w, @"倍速", 0, &near); }
-        if (!lab) continue;
-        if (!near) continue;  // 只处理底部区域的提示条
+        if (!lab || !near) continue;
         static double lastFound = 0;
         double now = CACurrentMediaTime();
         if (now - lastFound > 3.0) { lastFound = now; LJ_Vibrate(2); }
         UIView *panel = LJ_PanelForLabel(lab);
-        if (panel && LJ_OkPanel(panel)) LJ_ApplyGlass(panel);
+        if (panel) {
+            // 只处理位于屏幕底部的面板：位置安全闸
+            UIView *win = panel.window;
+            if (!win) for (UIWindow *ww in LJ_AllWindows()) { win = ww; break; }
+            if (win) {
+                CGRect f = [panel convertRect:panel.bounds toView:win];
+                CGFloat sh = win.bounds.size.height, sw = win.bounds.size.width;
+                if (f.origin.y >= sh * 0.45 &&
+                    f.size.height <= sh * 0.5 &&
+                    f.size.width <= sw * 0.96 &&
+                    f.size.width * f.size.height <= sw * sh * 0.5) {
+                    LJ_ApplyGlass(panel);
+                }
+            }
+        }
     }
 }
 
@@ -152,20 +155,5 @@ static void LJ_Scan(void){
 - (void)layoutSubviews {
     %orig;
     LJ_Scan();
-}
-%end
-
-%hook UIView
-- (void)layoutSubviews {
-    %orig;
-    static Class afd = nil;
-    if (!afd) afd = NSClassFromString(@"AFDFastSpeedView");
-    if (afd && [self isKindOfClass:afd]) {
-        UILabel *lab = LJ_FindLabel((UIView *)self, @"松手", 0, NULL);
-        if (!lab) lab = LJ_FindLabel((UIView *)self, @"锁定", 0, NULL);
-        if (!lab) lab = LJ_FindLabel((UIView *)self, @"倍速", 0, NULL);
-        UIView *p = lab ? LJ_PanelForLabel(lab) : nil;
-        if (p && LJ_OkPanel(p)) LJ_ApplyGlass(p);
-    }
 }
 %end
