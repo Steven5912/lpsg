@@ -1,5 +1,5 @@
 // 长按倍速玻璃 — 从 DYKiller(液态玻璃) 移植到 siwenjiajia
-// v5: 扩大"松手/下滑"标签搜索范围到父级链，面板匹配放宽，玻璃确保可见
+// v6: 硬性安全——只给"小而像提示面板"的视图铺玻璃，绝不给大视图/视频层铺
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
 
@@ -11,10 +11,9 @@ static BOOL LJ_Enabled(void){
     return v ? [ud boolForKey:LJ_GLASS_KEY] : YES;
 }
 
-// 轻量液态玻璃材质（确保有可见效果）
+// 轻量液态玻璃材质
 static UIView *LJ_MakeGlass(void){
     UIVisualEffect *eff = nil;
-    // 1) iOS26 液态玻璃 UIGlassEffect
     Class ge = NSClassFromString(@"UIGlassEffect");
     if (ge) {
         SEL s = NSSelectorFromString(@"effectWithStyle:");
@@ -23,7 +22,6 @@ static UIView *LJ_MakeGlass(void){
             eff = msg(ge, s, 0);
         }
     }
-    // 2) 回退：标准材质磨砂（清晰可见、不遮挡）
     if (!eff) eff = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
     if (!eff) eff = [UIBlurEffect effectWithStyle:UIBlurEffectStyleRegular];
     UIVisualEffectView *v = [[UIVisualEffectView alloc] initWithEffect:eff];
@@ -32,8 +30,21 @@ static UIView *LJ_MakeGlass(void){
     return v;
 }
 
+// 安全闸：目标必须是"小而像提示面板"的视图，否则一律不铺（绝不误伤全屏/视频层）
+static BOOL LJ_IsSmallPanel(UIView *target){
+    CGFloat sw = [UIScreen mainScreen].bounds.size.width;
+    CGFloat sh = [UIScreen mainScreen].bounds.size.height;
+    CGFloat w = target.bounds.size.width, h = target.bounds.size.height;
+    if (w <= 0 || h <= 0) return NO;
+    if (h < 28 || h > 170) return NO;      // 高度适中（排除视频层/全屏）
+    if (w < 60 || w > sw * 0.92) return NO; // 宽度适中
+    if (w * h > sw * sh * 0.5) return NO;   // 面积不超过半屏
+    return YES;
+}
+
 static void LJ_ApplyGlass(UIView *target){
     if (!target || !LJ_Enabled()) return;
+    if (!LJ_IsSmallPanel(target)) return;   // 硬性：不是小面板就不铺
     for (UIView *sub in target.subviews) if (sub.tag == 0x5A5A) return;
     UIView *glass = LJ_MakeGlass();
     if (!glass) return;
@@ -60,42 +71,39 @@ static UILabel *LJ_FindLabel(UIView *c, NSString *needle, int depth){
     return nil;
 }
 
-// ===== 从 self 向上沿父级链各层搜索标签 =====
-static UILabel *LJ_FindLabelInChain(UIView *sv, NSString *needle){
-    UIView *cur = sv;
-    for (int i = 0; i < 4; i++) {
-        if (!cur) break;
-        UILabel *lab = LJ_FindLabel(cur, needle, 0);
-        if (lab) return lab;
-        cur = cur.superview;
+// ===== 从 self 向上沿父级链各层搜索标签（优先最特异的词） =====
+static UILabel *LJ_FindLabelInChain(UIView *sv){
+    NSArray *needles = @[@"松手", @"锁定", @"倍速"];
+    for (NSString *n in needles) {
+        UIView *cur = sv;
+        for (int i = 0; i < 4; i++) {
+            if (!cur) break;
+            UILabel *lab = LJ_FindLabel(cur, n, 0);
+            if (lab) return lab;
+            cur = cur.superview;
+        }
     }
     return nil;
 }
 
-// ===== 从 label 向上找面板容器（非全屏，匹配放宽） =====
+// ===== 从 label 向上找"小而像提示面板"的容器（最多3层，找不到返回nil） =====
 static UIView *LJ_PanelForLabel(UILabel *label){
     if (!label) return nil;
-    CGFloat sw = [UIScreen mainScreen].bounds.size.width;
-    CGFloat sh = [UIScreen mainScreen].bounds.size.height;
     UIView *v = label;
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < 3; i++) {
         UIView *p = v.superview;
         if (!p) break;
-        CGFloat w = p.bounds.size.width, h = p.bounds.size.height;
-        BOOL fullscreen = (w >= sw * 0.95 && h >= sh * 0.6);
-        if (w >= 40 && h >= 24 && !fullscreen) return p;
+        if (LJ_IsSmallPanel(p)) return p;
         v = p;
     }
-    return label.superview;
+    return nil; // 找不到就不铺，绝不误伤大视图
 }
 
 // ===== 一、只给底部倍速面板铺玻璃 =====
 %hook AFDFastSpeedView
 - (void)layoutSubviews {
     %orig;
-    UIView *sv = (UIView *)self;
-    UILabel *lab = LJ_FindLabelInChain(sv, @"松手");
-    if (!lab) lab = LJ_FindLabelInChain(sv, @"下滑");
+    UILabel *lab = LJ_FindLabelInChain((UIView *)self);
     if (!lab) return;
     UIView *panel = LJ_PanelForLabel(lab);
     if (panel) LJ_ApplyGlass(panel);
