@@ -1,41 +1,36 @@
-name: Build 长按倍速玻璃 (arm64e)
+name: Build CommentGlass (arm64e)
 on:
-  workflow_dispatch:      # 在 Actions 页面手动点 Run
+  workflow_dispatch:
   push:
     branches: [ main, master ]
 
 jobs:
   build:
-    runs-on: macos-latest   # 云端 macOS，自带 Apple Xcode → 能编真 arm64e
+    runs-on: macos-latest
     steps:
       - name: 拉取代码
         uses: actions/checkout@v4
-
-      - name: 安装 ldid（Theos 签名工具）
+      - name: 安装 ldid
         run: brew install ldid || true
-
       - name: 安装 Theos
         run: |
           sudo mkdir -p /opt/theos
           sudo chown -R $(whoami) /opt/theos
           git clone --recursive --depth 1 https://github.com/theos/theos.git /opt/theos
-
-      - name: 准备 iOS SDK（用 Xcode 自带）
+      - name: 准备 iOS SDK
         run: |
           mkdir -p /opt/theos/sdks
           cp -r /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk /opt/theos/sdks/
           ls /opt/theos/sdks/
-
       - name: 编译 (arm64 + arm64e)
         run: |
           export THEOS=/opt/theos
           export THEOS_DEVICE_IP=127.0.0.1
           make clean package
-
       - name: 上传 deb 产物
         uses: actions/upload-artifact@v4
         with:
-          name: 长按倍速玻璃_deb
+          name: CommentGlass_deb
           path: |
             packages/*.deb
             .theos/obj/debug/arm64e/*.dylib
