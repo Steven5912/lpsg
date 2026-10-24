@@ -1,14 +1,15 @@
 // 长按倍速玻璃 — 从 DYKiller(液态玻璃) 移植到 siwenjiajia
-// v3: 只给底部"下滑松手锁定2倍速"面板铺轻量液态玻璃，不铺全屏
+// v4: 不用 siwenjiajia 自带整屏玻璃(那会糊全屏)，只给自己 key + 只铺底部面板
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
 
-#define LJ_GLASS_KEY @"sjj_video_long_press_glass_enabled_v1"
+// 自己的开关（绝不动 siwenjiajia 的 sjj_video_long_press_glass_enabled_v1，那是整屏玻璃）
+#define LJ_GLASS_KEY @"SJWJLongPressSpeedGlass"
 
 static BOOL LJ_Enabled(void){
     NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
     id v = [ud objectForKey:LJ_GLASS_KEY];
-    return v ? [ud boolForKey:LJ_GLASS_KEY] : YES;
+    return v ? [ud boolForKey:LJ_GLASS_KEY] : YES; // 默认开启
 }
 
 // 轻量液态玻璃材质（不遮挡视频）
@@ -28,7 +29,7 @@ static UIView *LJ_MakeGlass(void){
             }
         }
     }
-    // 2) 回退：超薄材质（透明磨砂，不遮挡）
+    // 2) 回退：超薄磨砂（半透明，能看到视频）
     UIVisualEffectView *v = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial]];
     v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     v.userInteractionEnabled = NO;
@@ -63,7 +64,7 @@ static UILabel *LJ_FindLabel(UIView *c, NSString *needle){
     return nil;
 }
 
-// ===== 从 label 向上找面板容器（大小合适的一层） =====
+// ===== 从 label 向上找面板容器（大小合适的一层，绝不回退到全屏视图） =====
 static UIView *LJ_PanelForLabel(UILabel *label){
     if (!label) return nil;
     UIView *v = label;
@@ -71,11 +72,11 @@ static UIView *LJ_PanelForLabel(UILabel *label){
         UIView *p = v.superview;
         if (!p) break;
         CGFloat w = p.bounds.size.width, h = p.bounds.size.height;
-        // 面板特征：宽度>=80，高度36~500（不是全屏），不是纯文本小容器
-        if (w >= 80 && h >= 36 && h <= 500) return p;
+        // 面板特征：宽>=80 且 高36~250（明确不是全屏）
+        if (w >= 80 && h >= 36 && h <= 250) return p;
         v = p;
     }
-    return label.superview;
+    return nil; // 找不到就什么都不做，绝不全屏
 }
 
 // ===== 一、只给底部倍速面板铺玻璃 =====
@@ -137,7 +138,7 @@ static NSInteger LJ_TargetSection(UITableView *tv){
 }
 %end
 
-// ===== 三、默认开启 =====
+// ===== 三、默认开启自己的开关（不碰 siwenjiajia 的整屏玻璃开关） =====
 %ctor {
     NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
     id v = [ud objectForKey:LJ_GLASS_KEY];
