@@ -1,4 +1,4 @@
-// 长按倍速玻璃 — v25: 倍速提示一出现立刻铺玻璃（hook setText + 0.08s 快速扫描兜底）
+// 长按倍速玻璃 — v26: hook layoutSubviews 即时铺/校正玻璃，覆盖复用label的首次显示
 #import <UIKit/UIKit.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <objc/message.h>
@@ -65,7 +65,6 @@ static void LJ_ApplyGlassToLabel(UILabel *label){
     if (!parent) return;
     CGFloat sw = [UIScreen mainScreen].bounds.size.width;
     if (label.text.length == 0) return;
-    for (UIView *sub in parent.subviews) if (sub.tag == 0x5A5A) return;
 
     CGRect tf = label.frame;
     UIFont *font = label.font ?: [UIFont systemFontOfSize:13];
@@ -99,6 +98,16 @@ static void LJ_ApplyGlassToLabel(UILabel *label){
     pf.origin.y = CGRectGetMidY(tf) - ph / 2.0;
     pf.origin.x = MAX(2, pf.origin.x);
     if (CGRectGetMaxX(pf) > sw - 2) pf.origin.x = sw - 2 - pf.size.width;
+
+    // 已有玻璃则校正位置（实时跟随label），没有才新建
+    for (UIView *sub in parent.subviews) {
+        if (sub.tag == 0x5A5A) {
+            if (CGRectEqualToRect(sub.frame, pf) && fabs(sub.layer.cornerRadius - pf.size.height/2.0) < 1) return;
+            sub.frame = pf;
+            sub.layer.cornerRadius = pf.size.height / 2.0;
+            return;
+        }
+    }
 
     UIVisualEffect *eff = LJ_MakeEffect();
     if (!eff) return;
@@ -192,6 +201,15 @@ static void LJ_Scan(void){
 }
 
 %hook UILabel
+- (void)layoutSubviews {
+    %orig;
+    if (LJ_IsHintText(self.text)) {
+        UILabel *lab = self;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (LJ_IsNearBottom(lab)) LJ_ApplyGlassToLabel(lab);
+        });
+    }
+}
 - (void)setText:(NSString *)text {
     %orig;
     if (LJ_IsHintText(self.text)) {
