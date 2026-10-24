@@ -1,6 +1,7 @@
 // 长按倍速玻璃 — 从 DYKiller(液态玻璃) 移植到 siwenjiajia
-// v12: 定时器 + 加载诊断横幅（确认插件是否真正加载）
+// v13: 震动诊断（证明插件是否加载）+ 多路找窗口
 #import <UIKit/UIKit.h>
+#import <AudioToolbox/AudioToolbox.h>
 #import <objc/message.h>
 
 static UIView *LJ_MakeGlass(void){
@@ -42,7 +43,7 @@ static void LJ_ApplyGlass(UIView *target){
 }
 
 static UILabel *LJ_FindLabel(UIView *c, NSString *needle, int depth){
-    if (!c || depth > 10) return nil;
+    if (!c || depth > 12) return nil;
     for (UIView *sub in c.subviews) {
         if ([sub isKindOfClass:[UILabel class]]) {
             NSString *t = ((UILabel *)sub).text;
@@ -59,7 +60,7 @@ static UIView *LJ_PanelForLabel(UILabel *label){
     UIView *p = label.superview;
     if (!p) return nil;
     if (p.bounds.size.height < 20 || p.bounds.size.width < 40) {
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < 6; i++) {
             p = p.superview;
             if (!p) break;
             if (p.bounds.size.height >= 20 && p.bounds.size.width >= 40) break;
@@ -68,14 +69,31 @@ static UIView *LJ_PanelForLabel(UILabel *label){
     return p;
 }
 
+// 多路回退找所有窗口
 static NSArray *LJ_AllWindows(void){
     NSMutableArray *arr = [NSMutableArray array];
+    NSMutableSet *seen = [NSMutableSet set];
+    void (^add)(UIWindow *) = ^(UIWindow *w){
+        if (w && ![seen containsObject:[NSValue valueWithNonretainedObject:w]]) {
+            [seen addObject:[NSValue valueWithNonretainedObject:w]];
+            [arr addObject:w];
+        }
+    };
     if (@available(iOS 13.0, *)) {
         for (UIScene *sc in [UIApplication sharedApplication].connectedScenes) {
             if ([sc isKindOfClass:[UIWindowScene class]]) {
-                for (UIWindow *w in ((UIWindowScene *)sc).windows) if (w) [arr addObject:w];
+                for (UIWindow *w in ((UIWindowScene *)sc).windows) add(w);
             }
         }
+    }
+    UIApplication *app = [UIApplication sharedApplication];
+    if ([app respondsToSelector:@selector(windows)]) {
+        for (UIWindow *w in [app windows]) add(w);
+    }
+    if ([app respondsToSelector:@selector(keyWindow)]) add([app keyWindow]);
+    if (app.delegate && [app.delegate respondsToSelector:@selector(window)]) {
+        UIWindow *w = [app.delegate performSelector:@selector(window)];
+        if (w) add(w);
     }
     return arr;
 }
@@ -91,32 +109,15 @@ static void LJ_Scan(void){
     }
 }
 
-static void LJ_ShowDiag(void){
-    for (UIWindow *w in LJ_AllWindows()) {
-        CGFloat wd = w.bounds.size.width;
-        UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(20, 70, wd - 40, 44)];
-        lb.text = @"长按倍速玻璃插件已加载";
-        lb.backgroundColor = [UIColor colorWithRed:0 green:0.5 blue:0.9 alpha:0.85];
-        lb.textColor = [UIColor whiteColor];
-        lb.font = [UIFont boldSystemFontOfSize:15];
-        lb.textAlignment = NSTextAlignmentCenter;
-        lb.layer.cornerRadius = 10;
-        lb.clipsToBounds = YES;
-        lb.alpha = 0;
-        [w addSubview:lb];
-        [UIView animateWithDuration:0.3 animations:^{ lb.alpha = 1; }];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [UIView animateWithDuration:0.3 animations:^{ lb.alpha = 0; } completion:^(BOOL f){ [lb removeFromSuperview]; }];
-        });
-        break;
-    }
+// 震动诊断：插件加载后 2 秒震动一下（不依赖窗口，加载即触发）
+static void LJ_Diag(void){
+    AudioServicesPlaySystemSound(kSystemSoundID_Vibrate);
 }
 
-// ===== 主：定时器 =====
 %ctor {
     dispatch_async(dispatch_get_main_queue(), ^{
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            LJ_ShowDiag();
+            LJ_Diag();
         });
         [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *t){
             LJ_Scan();
@@ -124,7 +125,6 @@ static void LJ_ShowDiag(void){
     });
 }
 
-// ===== 备份触发：UIWindow/UIView/AFDFastSpeedView 钩子 =====
 %hook UIWindow
 - (void)layoutSubviews {
     %orig;
