@@ -1,5 +1,5 @@
 // 长按倍速玻璃 — 从 DYKiller(液态玻璃) 移植到 siwenjiajia
-// v7: 面板判定=“位于屏幕底部 + 高度适中”，允许底部通栏短条，排除视频层/中间层
+// v8: 全窗口搜标签 + 底部判断放宽 + 延迟重查捕捉后出现的标签
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
 
@@ -11,7 +11,6 @@ static BOOL LJ_Enabled(void){
     return v ? [ud boolForKey:LJ_GLASS_KEY] : YES;
 }
 
-// 轻量液态玻璃材质
 static UIView *LJ_MakeGlass(void){
     UIVisualEffect *eff = nil;
     Class ge = NSClassFromString(@"UIGlassEffect");
@@ -30,26 +29,29 @@ static UIView *LJ_MakeGlass(void){
     return v;
 }
 
-// 视图是否位于屏幕底部（下缘在底部 25% 区域内）
+// 是否位于屏幕底部区域（无窗口时放宽，靠高度+面积闸兜底）
 static BOOL LJ_IsBottomArea(UIView *target){
     CGFloat sh = [UIScreen mainScreen].bounds.size.height;
     UIWindow *win = target.window;
     CGRect f = target.bounds;
-    if (win) f = [target convertRect:target.bounds toView:win];
-    CGFloat bottomGap = sh - CGRectGetMaxY(f);
-    return bottomGap >= 0 && bottomGap < sh * 0.25;
+    if (win) {
+        f = [target convertRect:target.bounds toView:win];
+        CGFloat bottomGap = sh - CGRectGetMaxY(f);
+        return bottomGap >= -20 && bottomGap < sh * 0.30;
+    }
+    return YES;
 }
 
-// 安全面板判定：高度适中 + 位于屏幕底部；排除视频层/中间层/全屏
+// 安全面板：高度适中 + 面积不超半屏 + 尽量位于底部；排除视频层/中间层/全屏
 static BOOL LJ_IsSafePanel(UIView *target){
     CGFloat sw = [UIScreen mainScreen].bounds.size.width;
     CGFloat sh = [UIScreen mainScreen].bounds.size.height;
     CGFloat w = target.bounds.size.width, h = target.bounds.size.height;
     if (w <= 0 || h <= 0) return NO;
-    if (h < 24 || h > 170) return NO;      // 高度适中（排除视频层/全屏）
-    if (w < 40) return NO;                 // 不要太窄
-    if (w * h > sw * sh * 0.5) return NO;   // 面积不超过半屏
-    if (!LJ_IsBottomArea(target)) return NO; // 必须位于屏幕底部
+    if (h < 20 || h > 170) return NO;
+    if (w < 40) return NO;
+    if (w * h > sw * sh * 0.5) return NO;
+    if (!LJ_IsBottomArea(target)) return NO;
     return YES;
 }
 
@@ -68,9 +70,8 @@ static void LJ_ApplyGlass(UIView *target){
     [target sendSubviewToBack:glass];
 }
 
-// ===== 递归查找包含指定文字的 UILabel（限深度防卡顿） =====
 static UILabel *LJ_FindLabel(UIView *c, NSString *needle, int depth){
-    if (!c || depth > 8) return nil;
+    if (!c || depth > 10) return nil;
     for (UIView *sub in c.subviews) {
         if ([sub isKindOfClass:[UILabel class]]) {
             NSString *t = ((UILabel *)sub).text;
@@ -82,7 +83,6 @@ static UILabel *LJ_FindLabel(UIView *c, NSString *needle, int depth){
     return nil;
 }
 
-// ===== 从 self 向上沿父级链各层搜索标签（优先最特异的词） =====
 static UILabel *LJ_FindLabelInChain(UIView *sv){
     NSArray *needles = @[@"松手", @"锁定", @"倍速"];
     for (NSString *n in needles) {
@@ -97,7 +97,20 @@ static UILabel *LJ_FindLabelInChain(UIView *sv){
     return nil;
 }
 
-// ===== 从 label 向上找"底部安全面板"容器（最多6层） =====
+// 全局找标签：先自身链，再整个窗口
+static UILabel *LJ_FindSpeedLabel(UIView *sv){
+    UILabel *lab = LJ_FindLabelInChain(sv);
+    if (lab) return lab;
+    UIWindow *win = sv.window;
+    if (!win) win = [UIApplication sharedApplication].keyWindow;
+    if (win) {
+        lab = LJ_FindLabel(win, @"松手", 0);
+        if (!lab) lab = LJ_FindLabel(win, @"锁定", 0);
+        if (!lab) lab = LJ_FindLabel(win, @"倍速", 0);
+    }
+    return lab;
+}
+
 static UIView *LJ_PanelForLabel(UILabel *label){
     if (!label) return nil;
     UIView *v = label;
@@ -114,10 +127,21 @@ static UIView *LJ_PanelForLabel(UILabel *label){
 %hook AFDFastSpeedView
 - (void)layoutSubviews {
     %orig;
-    UILabel *lab = LJ_FindLabelInChain((UIView *)self);
-    if (!lab) return;
-    UIView *panel = LJ_PanelForLabel(lab);
+    UIView *sv = (UIView *)self;
+    UILabel *lab = LJ_FindSpeedLabel(sv);
+    UIView *panel = lab ? LJ_PanelForLabel(lab) : nil;
     if (panel) LJ_ApplyGlass(panel);
+    else {
+        // 布局瞬间标签可能未出现，延迟重查一次
+        __weak typeof(self) ws = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIView *sv2 = (UIView *)ws;
+            if (!sv2) return;
+            UILabel *lab2 = LJ_FindSpeedLabel(sv2);
+            UIView *p2 = lab2 ? LJ_PanelForLabel(lab2) : nil;
+            if (p2) LJ_ApplyGlass(p2);
+        });
+    }
 }
 %end
 
