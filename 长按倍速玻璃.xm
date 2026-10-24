@@ -3,8 +3,6 @@
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
 
-static BOOL LJ_Enabled(void){ return YES; }
-
 static UIView *LJ_MakeGlass(void){
     UIVisualEffect *eff = nil;
     Class ge = NSClassFromString(@"UIGlassEffect");
