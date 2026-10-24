@@ -1,15 +1,12 @@
 // 长按倍速玻璃 — 从 DYKiller(液态玻璃) 移植到 siwenjiajia
-// v8: 全窗口搜标签 + 底部判断放宽 + 延迟重查捕捉后出现的标签
+// v9: 钩全局 UIView.layoutSubviews（必然触发）+ 强制开启 + 直接给文字容器铺玻璃
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
 
 #define LJ_GLASS_KEY @"SJWJLongPressSpeedGlass"
 
-static BOOL LJ_Enabled(void){
-    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
-    id v = [ud objectForKey:LJ_GLASS_KEY];
-    return v ? [ud boolForKey:LJ_GLASS_KEY] : YES;
-}
+// 强制开启（排除开关未生效的失败可能）
+static BOOL LJ_Enabled(void){ return YES; }
 
 static UIView *LJ_MakeGlass(void){
     UIVisualEffect *eff = nil;
@@ -29,35 +26,15 @@ static UIView *LJ_MakeGlass(void){
     return v;
 }
 
-// 是否位于屏幕底部区域（无窗口时放宽，靠高度+面积闸兜底）
-static BOOL LJ_IsBottomArea(UIView *target){
-    CGFloat sh = [UIScreen mainScreen].bounds.size.height;
-    UIWindow *win = target.window;
-    CGRect f = target.bounds;
-    if (win) {
-        f = [target convertRect:target.bounds toView:win];
-        CGFloat bottomGap = sh - CGRectGetMaxY(f);
-        return bottomGap >= -20 && bottomGap < sh * 0.30;
-    }
-    return YES;
-}
-
-// 安全面板：高度适中 + 面积不超半屏 + 尽量位于底部；排除视频层/中间层/全屏
-static BOOL LJ_IsSafePanel(UIView *target){
+static void LJ_ApplyGlass(UIView *target){
+    if (!target || !LJ_Enabled()) return;
+    // 安全闸：高度不超170、面积不超半屏（排除视频层/全屏）
     CGFloat sw = [UIScreen mainScreen].bounds.size.width;
     CGFloat sh = [UIScreen mainScreen].bounds.size.height;
     CGFloat w = target.bounds.size.width, h = target.bounds.size.height;
-    if (w <= 0 || h <= 0) return NO;
-    if (h < 20 || h > 170) return NO;
-    if (w < 40) return NO;
-    if (w * h > sw * sh * 0.5) return NO;
-    if (!LJ_IsBottomArea(target)) return NO;
-    return YES;
-}
-
-static void LJ_ApplyGlass(UIView *target){
-    if (!target || !LJ_Enabled()) return;
-    if (!LJ_IsSafePanel(target)) return;
+    if (w <= 0 || h <= 0) return;
+    if (h > 170) return;
+    if (w * h > sw * sh * 0.5) return;
     for (UIView *sub in target.subviews) if (sub.tag == 0x5A5A) return;
     UIView *glass = LJ_MakeGlass();
     if (!glass) return;
@@ -83,68 +60,74 @@ static UILabel *LJ_FindLabel(UIView *c, NSString *needle, int depth){
     return nil;
 }
 
-static UILabel *LJ_FindLabelInChain(UIView *sv){
+static UILabel *LJ_FindSpeedLabel(UIView *sv){
+    UIWindow *win = sv.window;
     NSArray *needles = @[@"松手", @"锁定", @"倍速"];
-    for (NSString *n in needles) {
-        UIView *cur = sv;
-        for (int i = 0; i < 4; i++) {
-            if (!cur) break;
+    // 先在速度视图及其父级链找
+    UIView *cur = sv;
+    for (int i = 0; i < 4; i++) {
+        if (!cur) break;
+        for (NSString *n in needles) {
             UILabel *lab = LJ_FindLabel(cur, n, 0);
             if (lab) return lab;
-            cur = cur.superview;
+        }
+        cur = cur.superview;
+    }
+    // 再搜整个窗口
+    if (win) {
+        for (NSString *n in needles) {
+            UILabel *lab = LJ_FindLabel(win, n, 0);
+            if (lab) return lab;
         }
     }
     return nil;
 }
 
-// 全局找标签：先自身链，再整个窗口
-static UILabel *LJ_FindSpeedLabel(UIView *sv){
-    UILabel *lab = LJ_FindLabelInChain(sv);
-    if (lab) return lab;
-    UIWindow *win = sv.window;
-    if (win) {
-        lab = LJ_FindLabel(win, @"松手", 0);
-        if (!lab) lab = LJ_FindLabel(win, @"锁定", 0);
-        if (!lab) lab = LJ_FindLabel(win, @"倍速", 0);
-    }
-    return lab;
-}
-
+// 直接给"下滑松手锁定2倍速"文字所在的容器铺玻璃（即图二的面板）
 static UIView *LJ_PanelForLabel(UILabel *label){
     if (!label) return nil;
-    UIView *v = label;
-    for (int i = 0; i < 6; i++) {
-        UIView *p = v.superview;
-        if (!p) break;
-        if (LJ_IsSafePanel(p)) return p;
-        v = p;
+    UIView *p = label.superview;
+    if (!p) return nil;
+    // 直接容器太小则向上找稍大的
+    if (p.bounds.size.height < 20 || p.bounds.size.width < 40) {
+        for (int i = 0; i < 5; i++) {
+            p = p.superview;
+            if (!p) break;
+            if (p.bounds.size.height >= 20 && p.bounds.size.width >= 40) break;
+        }
     }
-    return nil;
+    return p;
 }
 
-// ===== 一、只给底部倍速面板铺玻璃 =====
-%hook AFDFastSpeedView
+// ===== 核心：找到速度视图并铺玻璃 =====
+static void LJ_Process(UIView *sv){
+    UILabel *lab = LJ_FindSpeedLabel(sv);
+    if (!lab) return;
+    UIView *panel = LJ_PanelForLabel(lab);
+    if (panel) LJ_ApplyGlass(panel);
+}
+
+// 触发1：全局 UIView.layoutSubviews（子类经 super 必然触发）
+%hook UIView
 - (void)layoutSubviews {
     %orig;
-    UIView *sv = (UIView *)self;
-    UILabel *lab = LJ_FindSpeedLabel(sv);
-    UIView *panel = lab ? LJ_PanelForLabel(lab) : nil;
-    if (panel) LJ_ApplyGlass(panel);
-    else {
-        // 布局瞬间标签可能未出现，延迟重查一次
-        __weak typeof(self) ws = self;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            UIView *sv2 = (UIView *)ws;
-            if (!sv2) return;
-            UILabel *lab2 = LJ_FindSpeedLabel(sv2);
-            UIView *p2 = lab2 ? LJ_PanelForLabel(lab2) : nil;
-            if (p2) LJ_ApplyGlass(p2);
-        });
+    static Class afd = nil;
+    if (!afd) afd = NSClassFromString(@"AFDFastSpeedView");
+    if (afd && [self isKindOfClass:afd]) {
+        LJ_Process((UIView *)self);
     }
 }
 %end
 
-// ===== 二、注入“抖音优化-增强与优化”菜单开关 =====
+// 触发2：直接钩 AFDFastSpeedView（备份）
+%hook AFDFastSpeedView
+- (void)layoutSubviews {
+    %orig;
+    LJ_Process((UIView *)self);
+}
+%end
+
+// ===== 注入“抖音优化-增强与优化”菜单开关 =====
 static NSInteger LJ_TargetSection(UITableView *tv){
     long n = [tv numberOfSections];
     return n > 0 ? n - 1 : 0;
@@ -190,10 +173,9 @@ static NSInteger LJ_TargetSection(UITableView *tv){
 }
 %end
 
-// ===== 三、默认开启自己的开关 =====
+// ===== 默认开启 =====
 %ctor {
     NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
-    id v = [ud objectForKey:LJ_GLASS_KEY];
-    if (!v) [ud setBool:YES forKey:LJ_GLASS_KEY];
+    [ud setBool:YES forKey:LJ_GLASS_KEY];
     [ud synchronize];
 }
