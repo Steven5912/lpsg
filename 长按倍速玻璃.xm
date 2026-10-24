@@ -1,4 +1,4 @@
-// 长按倍速玻璃 — v23: 玻璃盖住"↓箭头+文字"整条提示并居中
+// 长按倍速玻璃 — v24: 按文字视觉中心（对齐感知）居中，箭头检测收紧
 #import <UIKit/UIKit.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <objc/message.h>
@@ -31,21 +31,21 @@ static UIVisualEffect *LJ_MakeEffect(void){
     return eff;
 }
 
-// 在文字左侧找箭头元素（UILabel箭头字符或紧邻的小图标）
+// 在文字左侧找箭头元素：只认紧贴文字左侧的小元素（箭头字符UILabel 或 极小图标）
 static CGRect LJ_FindArrowLeft(UIView *parent, UILabel *textLabel){
     CGRect tf = textLabel.frame;
     CGRect best = CGRectNull;
     for (UIView *sub in parent.subviews) {
         if (sub == textLabel) continue;
         CGRect sf = sub.frame;
-        if (CGRectGetMaxX(sf) > tf.origin.x + 12) continue;         // 不在文字左边
+        if (CGRectGetMaxX(sf) >= tf.origin.x + 20) continue;          // 不紧贴文字左侧
         if (CGRectGetMaxY(sf) < tf.origin.y || sf.origin.y > CGRectGetMaxY(tf)) continue; // 不纵向重叠
         BOOL arrowText = NO;
         if ([sub isKindOfClass:[UILabel class]]) {
             NSString *t = ((UILabel *)sub).text;
             if (t) arrowText = ([t containsString:@"↓"]||[t containsString:@"∨"]||[t containsString:@"⇣"]||[t containsString:@"▼"]||[t containsString:@"▽"]);
         }
-        BOOL small = sf.size.width <= 40 && sf.size.height <= 40;
+        BOOL small = sf.size.width <= 30 && sf.size.height <= 34;
         if (arrowText || small) {
             if (CGRectIsNull(best) || sf.origin.x < best.origin.x) best = sf;
         }
@@ -62,26 +62,33 @@ static void LJ_ApplyGlassToLabel(UILabel *label){
     for (UIView *sub in parent.subviews) if (sub.tag == 0x5A5A) return;
 
     CGRect tf = label.frame;
-    CGRect arrow = LJ_FindArrowLeft(parent, label);
-    CGFloat left = tf.origin.x;
-    CGFloat right = CGRectGetMaxX(tf);
-    if (!CGRectIsNull(arrow)) left = MIN(left, arrow.origin.x);
-    CGFloat spanW = right - left;
-
-    // 文字实测宽度作为下限，确保盖满整行
     UIFont *font = label.font ?: [UIFont systemFontOfSize:13];
     CGSize ts = [label.text boundingRectWithSize:CGSizeMake(sw, 200)
                         options:NSStringDrawingUsesLineFragmentOrigin
                         attributes:@{NSFontAttributeName: font}
                         context:nil].size;
-    CGFloat coverW = MAX(spanW, ceil(ts.width));
-    CGFloat pw = coverW + 40;   // +20 +20
-    CGFloat ph = (CGRectIsNull(arrow) ? tf.size.height : MAX(tf.size.height, arrow.size.height)) + 12; // +6 +6
+    CGFloat textW = ceil(ts.width);
+    CGFloat textH = ceil(ts.height);
+
+    // 文字视觉中心（按对齐方式，避免 label frame 比文字宽导致偏差）
+    CGFloat textMidX;
+    NSTextAlignment al = label.textAlignment;
+    if (al == NSTextAlignmentLeft)      textMidX = tf.origin.x + textW / 2.0;
+    else if (al == NSTextAlignmentRight) textMidX = CGRectGetMaxX(tf) - textW / 2.0;
+    else                                 textMidX = CGRectGetMidX(tf);
+
+    // 箭头向左延伸
+    CGRect arrow = LJ_FindArrowLeft(parent, label);
+    CGFloat hintLeft = textMidX - textW / 2.0;
+    CGFloat hintRight = textMidX + textW / 2.0;
+    if (!CGRectIsNull(arrow)) hintLeft = MIN(hintLeft, arrow.origin.x);
+    CGFloat centerX = (hintLeft + hintRight) / 2.0;
+
+    CGFloat pw = (hintRight - hintLeft) + 40;   // +20 +20
+    CGFloat ph = textH + 12;                     // +6 +6
     if (pw < 60) pw = 60;
     if (ph < 28) ph = 28;
 
-    // 以整条提示（箭头+文字）中心对称，让提示正居玻璃正中
-    CGFloat centerX = (left + right) / 2.0;
     CGRect pf;
     pf.size = CGSizeMake(pw, ph);
     pf.origin.x = centerX - pw / 2.0;
