@@ -1,4 +1,4 @@
-// 长按倍速玻璃 — v18: 液态玻璃药丸（文字周围留白+圆角+玻璃高光边缘）
+// 长按倍速玻璃 — v19: 更宽更扁 + 清透玻璃（超薄磨砂）
 #import <UIKit/UIKit.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <objc/message.h>
@@ -10,24 +10,22 @@ static void LJ_Vibrate(int n){
     }
 }
 
+// 清透玻璃：优先用最透明的超薄材质，做"能看穿的清玻璃"
 static UIVisualEffect *LJ_MakeEffect(void){
     UIVisualEffect *eff = nil;
-    Class ge = NSClassFromString(@"UIGlassEffect");
-    if (ge) {
-        SEL s = NSSelectorFromString(@"effectWithStyle:");
-        if (s && [ge respondsToSelector:s]) {
-            id (*msg)(id, SEL, NSInteger) = (id (*)(id, SEL, NSInteger))objc_msgSend;
-            @try { eff = msg(ge, s, 0); } @catch(...) { eff = nil; }
+    @try {
+        if ([UIBlurEffect respondsToSelector:@selector(effectWithStyle:)] &&
+            UIBlurEffectStyleSystemUltraThinMaterial != 999999) {
+            eff = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial];
         }
-    }
+    } @catch(...) { eff = nil; }
     if (!eff) {
-        @try { eff = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial]; } @catch(...) { eff = nil; }
+        @try { eff = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial]; } @catch(...) { eff = nil; }
     }
-    if (!eff) eff = [UIBlurEffect effectWithStyle:UIBlurEffectStyleRegular];
+    if (!eff) eff = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
     return eff;
 }
 
-// 在文字label周围铺一块液态玻璃药丸
 static void LJ_ApplyGlassToLabel(UILabel *label){
     if (!label) return;
     UIView *parent = label.superview;
@@ -38,8 +36,8 @@ static void LJ_ApplyGlassToLabel(UILabel *label){
     if (f.size.width > sw * 0.95) return;
     for (UIView *sub in parent.subviews) if (sub.tag == 0x5A5A) return;
 
-    // 在文字四周扩一圈留白，形成胶囊药丸
-    CGRect pf = CGRectInset(f, -16, -9);
+    // 更宽、更扁：左右留白加大，上下留白收小
+    CGRect pf = CGRectInset(f, -22, -5);
     pf.origin.x = MAX(4, pf.origin.x);
     if (CGRectGetMaxX(pf) > sw - 4) pf.origin.x = sw - 4 - pf.size.width;
 
@@ -50,10 +48,10 @@ static void LJ_ApplyGlassToLabel(UILabel *label){
     glass.userInteractionEnabled = NO;
     glass.layer.cornerRadius = pf.size.height / 2.0;
     glass.clipsToBounds = YES;
-    // 玻璃材质：柔和的半透明 + 高光边缘
-    glass.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.10];
-    glass.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.45].CGColor;
-    glass.layer.borderWidth = 0.6;
+    // 清透：几乎不带底色，仅靠超薄磨砂 + 玻璃亮边
+    glass.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.04];
+    glass.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.55].CGColor;
+    glass.layer.borderWidth = 0.7;
     glass.tag = 0x5A5A;
     NSUInteger idx = [parent.subviews indexOfObject:label];
     if (idx == NSNotFound) idx = 0;
