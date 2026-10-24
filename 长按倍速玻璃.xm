@@ -1,4 +1,4 @@
-// 长按倍速玻璃 — v21: 去白雾（高光大减）+ 更透的玻璃样式 + 再左移2pt 宽20高6
+// 长按倍速玻璃 — v22: 按文字实测宽度定玻璃大小，确保各视频都能盖满整行提示
 #import <UIKit/UIKit.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <objc/message.h>
@@ -10,7 +10,6 @@ static void LJ_Vibrate(int n){
     }
 }
 
-// 更透的液态玻璃：优先 UIGlassEffect 的"清透"样式，找不到才回退
 static UIVisualEffect *LJ_MakeEffect(void){
     UIVisualEffect *eff = nil;
     Class ge = NSClassFromString(@"UIGlassEffect");
@@ -36,15 +35,26 @@ static void LJ_ApplyGlassToLabel(UILabel *label){
     if (!label) return;
     UIView *parent = label.superview;
     if (!parent) return;
-    CGRect f = label.frame;
     CGFloat sw = [UIScreen mainScreen].bounds.size.width;
-    if (f.size.width <= 0 || f.size.height <= 0) return;
-    if (f.size.width > sw * 0.95) return;
+    if (label.text.length == 0) return;
     for (UIView *sub in parent.subviews) if (sub.tag == 0x5A5A) return;
 
-    // 尺寸：左右留白20，上下留白6，整体左移3pt（v21 比 v20 再左移2pt）
-    CGRect pf = CGRectInset(f, -20, -6);
-    pf.origin.x -= 3;
+    // 用文字实测宽度定玻璃尺寸，确保盖满整行提示（左右留白20，上下留白6）
+    UIFont *font = label.font ?: [UIFont systemFontOfSize:13];
+    CGSize ts = [label.text boundingRectWithSize:CGSizeMake(sw, 200)
+                        options:NSStringDrawingUsesLineFragmentOrigin
+                        attributes:@{NSFontAttributeName: font}
+                        context:nil].size;
+    CGFloat pw = ceil(ts.width) + 40;   // +20 +20
+    CGFloat ph = ceil(ts.height) + 12;  // +6 +6
+    if (pw < 60) pw = 60;
+    if (ph < 28) ph = 28;
+
+    // 以文字中心对齐，整体左移3pt
+    CGRect pf;
+    pf.size = CGSizeMake(pw, ph);
+    pf.origin.x = label.center.x - pw / 2.0 - 3;
+    pf.origin.y = label.center.y - ph / 2.0;
     pf.origin.x = MAX(2, pf.origin.x);
     if (CGRectGetMaxX(pf) > sw - 2) pf.origin.x = sw - 2 - pf.size.width;
 
@@ -62,7 +72,7 @@ static void LJ_ApplyGlassToLabel(UILabel *label){
     vev.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     [pill addSubview:vev];
 
-    // 顶部极细反光条（很淡，只占顶部20%，不糊不雾）
+    // 顶部极细反光条
     CAGradientLayer *gl = [CAGradientLayer layer];
     gl.frame = pill.bounds;
     gl.colors = @[(id)[UIColor colorWithWhite:1.0 alpha:0.10].CGColor,
@@ -72,7 +82,7 @@ static void LJ_ApplyGlassToLabel(UILabel *label){
     gl.endPoint = CGPointMake(0, 1);
     [pill.layer addSublayer:gl];
 
-    // 玻璃亮边（调淡）
+    // 玻璃亮边
     pill.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.25].CGColor;
     pill.layer.borderWidth = 0.5;
 
@@ -133,9 +143,10 @@ static NSArray *LJ_AllWindows(void){
 static void LJ_Scan(void){
     for (UIWindow *w in LJ_AllWindows()) {
         BOOL near = NO;
+        // 优先匹配完整提示词"松手"，避免找到"2倍速"这类局部小标签
         UILabel *lab = LJ_FindLabel(w, @"松手", 0, &near);
         if (!lab) { near = NO; lab = LJ_FindLabel(w, @"锁定", 0, &near); }
-        if (!lab) { near = NO; lab = LJ_FindLabel(w, @"倍速", 0, &near); }
+        if (!lab) { near = NO; lab = LJ_FindLabel(w, @"下滑", 0, &near); }
         if (!lab || !near) continue;
         static double lastFound = 0;
         double now = CACurrentMediaTime();
