@@ -53,7 +53,7 @@ static void LJ_ApplyGlassToLabel(UILabel *label){
     // 以文字中心对齐，整体左移3pt
     CGRect pf;
     pf.size = CGSizeMake(pw, ph);
-    pf.origin.x = label.center.x - pw / 2.0 - 3;
+    pf.origin.x = label.center.x - pw / 2.0;
     pf.origin.y = label.center.y - ph / 2.0;
     pf.origin.x = MAX(2, pf.origin.x);
     if (CGRectGetMaxX(pf) > sw - 2) pf.origin.x = sw - 2 - pf.size.width;
