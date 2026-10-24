@@ -1,4 +1,4 @@
-// 长按倍速玻璃 — v17: 直接把玻璃铺在文字label自身那一块上
+// 长按倍速玻璃 — v18: 液态玻璃药丸（文字周围留白+圆角+玻璃高光边缘）
 #import <UIKit/UIKit.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <objc/message.h>
@@ -27,33 +27,37 @@ static UIVisualEffect *LJ_MakeEffect(void){
     return eff;
 }
 
-// 直接把玻璃铺在文字label自身的 frame 上（置于label下方，文字保持可读）
+// 在文字label周围铺一块液态玻璃药丸
 static void LJ_ApplyGlassToLabel(UILabel *label){
     if (!label) return;
     UIView *parent = label.superview;
     if (!parent) return;
     CGRect f = label.frame;
-    CGFloat fh = f.size.height, fw = f.size.width;
     CGFloat sw = [UIScreen mainScreen].bounds.size.width;
-    if (fw <= 0 || fh <= 0) return;
-    if (fw > sw * 0.95) return;     // 文字宽度不超过屏宽95%
-    if (fh > 240) return;           // 文字高度有限
-    // 防重复：父视图已有玻璃则跳过
+    if (f.size.width <= 0 || f.size.height <= 0) return;
+    if (f.size.width > sw * 0.95) return;
     for (UIView *sub in parent.subviews) if (sub.tag == 0x5A5A) return;
+
+    // 在文字四周扩一圈留白，形成胶囊药丸
+    CGRect pf = CGRectInset(f, -16, -9);
+    pf.origin.x = MAX(4, pf.origin.x);
+    if (CGRectGetMaxX(pf) > sw - 4) pf.origin.x = sw - 4 - pf.size.width;
 
     UIVisualEffect *eff = LJ_MakeEffect();
     if (!eff) return;
     UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:eff];
-    glass.frame = f;
-    glass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    glass.frame = pf;
     glass.userInteractionEnabled = NO;
-    glass.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.12]; // 可见浅色基底
-    glass.layer.cornerRadius = 8;
+    glass.layer.cornerRadius = pf.size.height / 2.0;
     glass.clipsToBounds = YES;
+    // 玻璃材质：柔和的半透明 + 高光边缘
+    glass.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.10];
+    glass.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.45].CGColor;
+    glass.layer.borderWidth = 0.6;
     glass.tag = 0x5A5A;
     NSUInteger idx = [parent.subviews indexOfObject:label];
     if (idx == NSNotFound) idx = 0;
-    [parent insertSubview:glass atIndex:idx];  // 插到label下方 -> 玻璃在文字后面
+    [parent insertSubview:glass atIndex:idx];
 
     static double lastGlass = 0;
     double now = CACurrentMediaTime();
