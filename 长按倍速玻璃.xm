@@ -1,36 +1,32 @@
 // 长按倍速玻璃 — 从 DYKiller(液态玻璃) 移植到 siwenjiajia
-// v4: 不用 siwenjiajia 自带整屏玻璃(那会糊全屏)，只给自己 key + 只铺底部面板
+// v5: 扩大"松手/下滑"标签搜索范围到父级链，面板匹配放宽，玻璃确保可见
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
 
-// 自己的开关（绝不动 siwenjiajia 的 sjj_video_long_press_glass_enabled_v1，那是整屏玻璃）
 #define LJ_GLASS_KEY @"SJWJLongPressSpeedGlass"
 
 static BOOL LJ_Enabled(void){
     NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
     id v = [ud objectForKey:LJ_GLASS_KEY];
-    return v ? [ud boolForKey:LJ_GLASS_KEY] : YES; // 默认开启
+    return v ? [ud boolForKey:LJ_GLASS_KEY] : YES;
 }
 
-// 轻量液态玻璃材质（不遮挡视频）
+// 轻量液态玻璃材质（确保有可见效果）
 static UIView *LJ_MakeGlass(void){
+    UIVisualEffect *eff = nil;
     // 1) iOS26 液态玻璃 UIGlassEffect
     Class ge = NSClassFromString(@"UIGlassEffect");
     if (ge) {
         SEL s = NSSelectorFromString(@"effectWithStyle:");
         if (s && [ge respondsToSelector:s]) {
             id (*msg)(id, SEL, NSInteger) = (id (*)(id, SEL, NSInteger))objc_msgSend;
-            id eff = msg(ge, s, 0); // Standard
-            if (eff) {
-                UIVisualEffectView *v = [[UIVisualEffectView alloc] initWithEffect:eff];
-                v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-                v.userInteractionEnabled = NO;
-                return v;
-            }
+            eff = msg(ge, s, 0);
         }
     }
-    // 2) 回退：超薄磨砂（半透明，能看到视频）
-    UIVisualEffectView *v = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial]];
+    // 2) 回退：标准材质磨砂（清晰可见、不遮挡）
+    if (!eff) eff = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
+    if (!eff) eff = [UIBlurEffect effectWithStyle:UIBlurEffectStyleRegular];
+    UIVisualEffectView *v = [[UIVisualEffectView alloc] initWithEffect:eff];
     v.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     v.userInteractionEnabled = NO;
     return v;
@@ -50,33 +46,47 @@ static void LJ_ApplyGlass(UIView *target){
     [target sendSubviewToBack:glass];
 }
 
-// ===== 递归查找包含"松手/下滑"文字的 UILabel =====
-static UILabel *LJ_FindLabel(UIView *c, NSString *needle){
-    if (!c) return nil;
+// ===== 递归查找包含指定文字的 UILabel（限深度防卡顿） =====
+static UILabel *LJ_FindLabel(UIView *c, NSString *needle, int depth){
+    if (!c || depth > 8) return nil;
     for (UIView *sub in c.subviews) {
         if ([sub isKindOfClass:[UILabel class]]) {
             NSString *t = ((UILabel *)sub).text;
             if (t && [t containsString:needle]) return (UILabel *)sub;
         }
-        UILabel *r = LJ_FindLabel(sub, needle);
+        UILabel *r = LJ_FindLabel(sub, needle, depth + 1);
         if (r) return r;
     }
     return nil;
 }
 
-// ===== 从 label 向上找面板容器（大小合适的一层，绝不回退到全屏视图） =====
+// ===== 从 self 向上沿父级链各层搜索标签 =====
+static UILabel *LJ_FindLabelInChain(UIView *sv, NSString *needle){
+    UIView *cur = sv;
+    for (int i = 0; i < 4; i++) {
+        if (!cur) break;
+        UILabel *lab = LJ_FindLabel(cur, needle, 0);
+        if (lab) return lab;
+        cur = cur.superview;
+    }
+    return nil;
+}
+
+// ===== 从 label 向上找面板容器（非全屏，匹配放宽） =====
 static UIView *LJ_PanelForLabel(UILabel *label){
     if (!label) return nil;
+    CGFloat sw = [UIScreen mainScreen].bounds.size.width;
+    CGFloat sh = [UIScreen mainScreen].bounds.size.height;
     UIView *v = label;
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 7; i++) {
         UIView *p = v.superview;
         if (!p) break;
         CGFloat w = p.bounds.size.width, h = p.bounds.size.height;
-        // 面板特征：宽>=80 且 高36~250（明确不是全屏）
-        if (w >= 80 && h >= 36 && h <= 250) return p;
+        BOOL fullscreen = (w >= sw * 0.95 && h >= sh * 0.6);
+        if (w >= 40 && h >= 24 && !fullscreen) return p;
         v = p;
     }
-    return nil; // 找不到就什么都不做，绝不全屏
+    return label.superview;
 }
 
 // ===== 一、只给底部倍速面板铺玻璃 =====
@@ -84,8 +94,8 @@ static UIView *LJ_PanelForLabel(UILabel *label){
 - (void)layoutSubviews {
     %orig;
     UIView *sv = (UIView *)self;
-    UILabel *lab = LJ_FindLabel(sv, @"松手");
-    if (!lab) lab = LJ_FindLabel(sv, @"下滑");
+    UILabel *lab = LJ_FindLabelInChain(sv, @"松手");
+    if (!lab) lab = LJ_FindLabelInChain(sv, @"下滑");
     if (!lab) return;
     UIView *panel = LJ_PanelForLabel(lab);
     if (panel) LJ_ApplyGlass(panel);
@@ -138,7 +148,7 @@ static NSInteger LJ_TargetSection(UITableView *tv){
 }
 %end
 
-// ===== 三、默认开启自己的开关（不碰 siwenjiajia 的整屏玻璃开关） =====
+// ===== 三、默认开启自己的开关 =====
 %ctor {
     NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
     id v = [ud objectForKey:LJ_GLASS_KEY];
