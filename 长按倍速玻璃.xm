@@ -102,7 +102,6 @@ static UILabel *LJ_FindSpeedLabel(UIView *sv){
     UILabel *lab = LJ_FindLabelInChain(sv);
     if (lab) return lab;
     UIWindow *win = sv.window;
-    if (!win) win = [UIApplication sharedApplication].keyWindow;
     if (win) {
         lab = LJ_FindLabel(win, @"松手", 0);
         if (!lab) lab = LJ_FindLabel(win, @"锁定", 0);
