@@ -1,14 +1,6 @@
-// 长按倍速玻璃 — v26: hook layoutSubviews 即时铺/校正玻璃，覆盖复用label的首次显示
+// 长按倍速玻璃 — v27: 去掉所有调试震动，纯净交付
 #import <UIKit/UIKit.h>
-#import <AudioToolbox/AudioToolbox.h>
 #import <objc/message.h>
-
-static void LJ_Vibrate(int n){
-    for (int i = 0; i < n; i++) {
-        AudioServicesPlaySystemSound(kSystemSoundID_Vibrate);
-        usleep(180000);
-    }
-}
 
 static UIVisualEffect *LJ_MakeEffect(void){
     UIVisualEffect *eff = nil;
@@ -138,10 +130,6 @@ static void LJ_ApplyGlassToLabel(UILabel *label){
     NSUInteger idx = [parent.subviews indexOfObject:label];
     if (idx == NSNotFound) idx = 0;
     [parent insertSubview:pill atIndex:idx];
-
-    static double lastGlass = 0;
-    double now = CACurrentMediaTime();
-    if (now - lastGlass > 3.0) { lastGlass = now; LJ_Vibrate(4); }
 }
 
 static BOOL LJ_IsHintText(NSString *t){
@@ -193,9 +181,6 @@ static void LJ_Scan(void){
         if (!lab) lab = LJ_FindLabel(w, @"锁定", 0);
         if (!lab) lab = LJ_FindLabel(w, @"下滑", 0);
         if (!lab || !LJ_IsNearBottom(lab)) continue;
-        static double lastFound = 0;
-        double now = CACurrentMediaTime();
-        if (now - lastFound > 3.0) { lastFound = now; LJ_Vibrate(2); }
         LJ_ApplyGlassToLabel(lab);
     }
 }
@@ -223,9 +208,6 @@ static void LJ_Scan(void){
 
 %ctor {
     dispatch_async(dispatch_get_main_queue(), ^{
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            LJ_Vibrate(1);
-        });
         [NSTimer scheduledTimerWithTimeInterval:0.08 repeats:YES block:^(NSTimer *t){
             LJ_Scan();
         }];
