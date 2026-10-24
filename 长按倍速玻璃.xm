@@ -1,5 +1,5 @@
 // 长按倍速玻璃 — 从 DYKiller(液态玻璃) 移植到 siwenjiajia
-// v10: 用必然存在的 UIWindow 钩子扫窗口找文字铺玻璃，绕开晚加载类钩子失效问题
+// v11: 定时器主动扫窗口找文字铺玻璃，完全不依赖钩子触发
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
 
@@ -68,30 +68,47 @@ static UIView *LJ_PanelForLabel(UILabel *label){
     return p;
 }
 
-// 主逻辑：在窗口内找"松手/锁定/倍速"文字并铺玻璃
-static void LJ_ProcessWindow(UIWindow *win){
-    if (!win) return;
-    static CFAbsoluteTime last = 0;
-    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
-    if (now - last < 0.25) return; // 节流，避免频繁扫
-    last = now;
-    UILabel *lab = LJ_FindLabel(win, @"松手", 0);
-    if (!lab) lab = LJ_FindLabel(win, @"锁定", 0);
-    if (!lab) lab = LJ_FindLabel(win, @"倍速", 0);
-    if (!lab) return;
-    UIView *panel = LJ_PanelForLabel(lab);
-    if (panel) LJ_ApplyGlass(panel);
+static NSArray *LJ_AllWindows(void){
+    NSMutableArray *arr = [NSMutableArray array];
+    if (@available(iOS 13.0, *)) {
+        for (UIScene *sc in [UIApplication sharedApplication].connectedScenes) {
+            if ([sc isKindOfClass:[UIWindowScene class]]) {
+                for (UIWindow *w in ((UIWindowScene *)sc).windows) if (w) [arr addObject:w];
+            }
+        }
+    }
+    return arr;
 }
 
-// 主触发：UIWindow 必然存在、必然在布局时触发
+// 定时扫描：找"松手/锁定/倍速"文字并铺玻璃
+static void LJ_Scan(void){
+    for (UIWindow *w in LJ_AllWindows()) {
+        UILabel *lab = LJ_FindLabel(w, @"松手", 0);
+        if (!lab) lab = LJ_FindLabel(w, @"锁定", 0);
+        if (!lab) lab = LJ_FindLabel(w, @"倍速", 0);
+        if (!lab) continue;
+        UIView *panel = LJ_PanelForLabel(lab);
+        if (panel) LJ_ApplyGlass(panel);
+    }
+}
+
+// ===== 触发1：定时器（主，可靠） =====
+%ctor {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *t){
+            LJ_Scan();
+        }];
+    });
+}
+
+// ===== 触发2/3/4：钩子（备份，若触发则更即时） =====
 %hook UIWindow
 - (void)layoutSubviews {
     %orig;
-    LJ_ProcessWindow((UIWindow *)self);
+    LJ_Scan();
 }
 %end
 
-// 备份触发：全局 UIView（AFDFastSpeedView 出现时）
 %hook UIView
 - (void)layoutSubviews {
     %orig;
@@ -152,9 +169,3 @@ static NSInteger LJ_TargetSection(UITableView *tv){
     [[NSUserDefaults standardUserDefaults] synchronize];
 }
 %end
-
-%ctor {
-    NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
-    [ud setBool:YES forKey:@"SJWJLongPressSpeedGlass"];
-    [ud synchronize];
-}
