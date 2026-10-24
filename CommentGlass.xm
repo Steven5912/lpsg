@@ -170,7 +170,10 @@ static void hook_viewDidAppear(id self, SEL _cmd, BOOL animated){
 }
 
 %hook AWECommentInputBackgroundView
-- (void)layoutSubviews { %orig; CG_ApplyToView(self); }
+- (void)layoutSubviews {
+    %orig;
+    CG_ApplyToView(self);
+}
 %end
 
 %ctor {
