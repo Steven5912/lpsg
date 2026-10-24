@@ -1,4 +1,4 @@
-// 长按倍速玻璃 — v19: 更宽更扁 + 清透玻璃（超薄磨砂）
+// 长按倍速玻璃 — v20: 清透液态玻璃（UIGlassEffect+无雾感基底+高光亮边）宽20左移1高6
 #import <UIKit/UIKit.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <objc/message.h>
@@ -10,19 +10,21 @@ static void LJ_Vibrate(int n){
     }
 }
 
-// 清透玻璃：优先用最透明的超薄材质，做"能看穿的清玻璃"
+// 真正的液态玻璃材质（UIGlassEffect），无白色雾感基底
 static UIVisualEffect *LJ_MakeEffect(void){
     UIVisualEffect *eff = nil;
-    @try {
-        if ([UIBlurEffect respondsToSelector:@selector(effectWithStyle:)] &&
-            UIBlurEffectStyleSystemUltraThinMaterial != 999999) {
-            eff = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial];
+    Class ge = NSClassFromString(@"UIGlassEffect");
+    if (ge) {
+        SEL s = NSSelectorFromString(@"effectWithStyle:");
+        if (s && [ge respondsToSelector:s]) {
+            id (*msg)(id, SEL, NSInteger) = (id (*)(id, SEL, NSInteger))objc_msgSend;
+            @try { eff = msg(ge, s, 0); } @catch(...) { eff = nil; }
         }
-    } @catch(...) { eff = nil; }
-    if (!eff) {
-        @try { eff = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThinMaterial]; } @catch(...) { eff = nil; }
     }
-    if (!eff) eff = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
+    if (!eff) {
+        @try { eff = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial]; } @catch(...) { eff = nil; }
+    }
+    if (!eff) eff = [UIBlurEffect effectWithStyle:UIBlurEffectStyleRegular];
     return eff;
 }
 
@@ -36,26 +38,45 @@ static void LJ_ApplyGlassToLabel(UILabel *label){
     if (f.size.width > sw * 0.95) return;
     for (UIView *sub in parent.subviews) if (sub.tag == 0x5A5A) return;
 
-    // 更宽、更扁：左右留白加大，上下留白收小
-    CGRect pf = CGRectInset(f, -22, -5);
-    pf.origin.x = MAX(4, pf.origin.x);
-    if (CGRectGetMaxX(pf) > sw - 4) pf.origin.x = sw - 4 - pf.size.width;
+    // 尺寸：左右留白20，上下留白6，整体左移1pt
+    CGRect pf = CGRectInset(f, -20, -6);
+    pf.origin.x -= 1;
+    pf.origin.x = MAX(2, pf.origin.x);
+    if (CGRectGetMaxX(pf) > sw - 2) pf.origin.x = sw - 2 - pf.size.width;
 
     UIVisualEffect *eff = LJ_MakeEffect();
     if (!eff) return;
-    UIVisualEffectView *glass = [[UIVisualEffectView alloc] initWithEffect:eff];
-    glass.frame = pf;
-    glass.userInteractionEnabled = NO;
-    glass.layer.cornerRadius = pf.size.height / 2.0;
-    glass.clipsToBounds = YES;
-    // 清透：几乎不带底色，仅靠超薄磨砂 + 玻璃亮边
-    glass.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.04];
-    glass.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.55].CGColor;
-    glass.layer.borderWidth = 0.7;
-    glass.tag = 0x5A5A;
+
+    // 胶囊容器
+    UIView *pill = [[UIView alloc] initWithFrame:pf];
+    pill.tag = 0x5A5A;
+    pill.userInteractionEnabled = NO;
+    pill.layer.cornerRadius = pf.size.height / 2.0;
+    pill.clipsToBounds = YES;
+
+    // 液态玻璃
+    UIVisualEffectView *vev = [[UIVisualEffectView alloc] initWithEffect:eff];
+    vev.frame = pill.bounds;
+    vev.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    [pill addSubview:vev];
+
+    // 顶部高光（玻璃反光）
+    CAGradientLayer *gl = [CAGradientLayer layer];
+    gl.frame = pill.bounds;
+    gl.colors = @[(id)[UIColor colorWithWhite:1.0 alpha:0.38].CGColor,
+                  (id)[UIColor colorWithWhite:1.0 alpha:0.0].CGColor];
+    gl.locations = @[@0.0f, @0.6f];
+    gl.startPoint = CGPointMake(0, 0);
+    gl.endPoint = CGPointMake(0, 1);
+    [pill.layer addSublayer:gl];
+
+    // 玻璃亮边
+    pill.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.5].CGColor;
+    pill.layer.borderWidth = 0.7;
+
     NSUInteger idx = [parent.subviews indexOfObject:label];
     if (idx == NSNotFound) idx = 0;
-    [parent insertSubview:glass atIndex:idx];
+    [parent insertSubview:pill atIndex:idx];
 
     static double lastGlass = 0;
     double now = CACurrentMediaTime();
